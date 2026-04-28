@@ -2,9 +2,9 @@ import cv2 as cv
 import numpy as np
 from src.core.pose_estimator import PoseEstimator 
 
-print("Yapay zeka modeli yükleniyor...")
+print("Loading...")
 estimator = PoseEstimator()
-print("Kamera açılıyor...")
+print("The camera is turning on...")
 
 cap = cv.VideoCapture(0)
 if not cap.isOpened():

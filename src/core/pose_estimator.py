@@ -40,7 +40,7 @@ class PoseEstimator:
         self.landmarker.detect_async(mp_image, timestamp)
         
         angles = {}
-        # ÇÖZÜM: Arka plan değiştirmeden önce yerel bir kopya alıyoruz
+        
         landmarks = self.current_landmarks 
         
         if landmarks:
@@ -67,7 +67,6 @@ class PoseEstimator:
         return landmarks, angles
 
     def draw_landmarks(self, frame):
-        # ÇÖZÜM: Çizim yaparken liste aniden kaybolmasın diye yerel kopya alıyoruz
         landmarks = self.current_landmarks
         
         if landmarks:
@@ -81,12 +80,12 @@ class PoseEstimator:
                 start_point = (int(start_landmark.x * frame.shape[1]), int(start_landmark.y * frame.shape[0]))
                 end_point = (int(end_landmark.x * frame.shape[1]), int(end_landmark.y * frame.shape[0]))
 
-                cv.line(frame, start_point, end_point, (195, 60, 190), 2)
+                cv.line(frame, start_point, end_point, (226, 43, 138), 2)
 
             for landmark in landmarks:
                 x = int(landmark.x * frame.shape[1])
                 y = int(landmark.y * frame.shape[0])
-                cv.circle(frame, (x, y), 5, (0, 250, 50), -1)
+                cv.circle(frame, (x, y), 5, (0, 140, 255), -1)
                 
         return frame     
       
