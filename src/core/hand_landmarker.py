@@ -1,6 +1,7 @@
 import cv2 as cv
 import mediapipe as mp
 import time
+import numpy as np
 from src.utils.draw_utils import draw_skeleton, draw_points
 
 class HandLandmarker:
@@ -48,6 +49,7 @@ class HandLandmarker:
     def detect(self, frame):
         self._timestamp = int(time.time() * 1000)
         rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+        rgb = np.ascontiguousarray(rgb)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         self.landmarker.detect_async(mp_image, self._timestamp)
         return self.current_landmarks, self.current_handedness

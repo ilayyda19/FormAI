@@ -36,6 +36,7 @@ class PoseEstimator:
 
     def process_frame(self, frame):
         rgb_frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+        rgb_frame = np.ascontiguousarray(rgb_frame)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
         timestamp = time.time_ns() // 1_000_000 
         self.landmarker.detect_async(mp_image, timestamp)
