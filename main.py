@@ -32,7 +32,7 @@ while True:
     hand_landmarks, handedness = hand_sensor.detect(frame)
 
     if hand_landmarks and handedness:
-        komut = gesture_analyzer.get_gesture(hand_landmarks, handedness)
+        komut = gesture_analyzer.get_gesture(hand_landmarks)
         frame = hand_sensor.draw_landmarks(frame)
 
         cv.putText(frame, f"System promt: {komut} ({handedness})", (30, 50), 
