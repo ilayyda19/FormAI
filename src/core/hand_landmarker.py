@@ -55,12 +55,14 @@ class HandLandmarker:
         return self.current_landmarks, self.current_handedness
     
     def draw_landmarks(self, frame):
+        
         landmarks = self.current_landmarks
         
-        if landmarks:
         
-           draw_skeleton(frame, self.current_landmarks, self.CONNECTIONS, color=(95, 0, 240))
-           draw_points(frame, self.current_landmarks)
+        if landmarks:
+           
+            draw_skeleton(frame, landmarks, self.CONNECTIONS, color=(95, 0, 240))
+            draw_points(frame, landmarks)
                 
         return frame
 

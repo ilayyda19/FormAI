@@ -87,12 +87,15 @@ class PoseEstimator:
         return landmarks, angles
 
     def draw_landmarks(self, frame):
+        
         landmarks = self.current_landmarks
+        
         
         if landmarks:
             
-            draw_skeleton(frame, self.current_landmarks, self.CONNECTIONS)
-            draw_points(frame, self.current_landmarks)
+            
+            draw_skeleton(frame, landmarks, self.CONNECTIONS)
+            draw_points(frame, landmarks)
                 
-        return frame     
+        return frame  
       
