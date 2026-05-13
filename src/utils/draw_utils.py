@@ -22,7 +22,7 @@ def draw_points(frame, landmarks, color=(255, 255, 255), radius=5):
 
 def draw_angle_text(frame, text, position, color=(255, 255, 255)):
     cv.putText(frame, str(int(text)), position, 
-               cv.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv.LINE_AA)
+               cv.FONT_HERSHEY_SIMPLEX, 0.5, color, 3, cv.LINE_AA)
 
 def draw_info_text(frame, text, position, color=(0, 255, 255), scale=1):
     cv.putText(frame, text, position,
