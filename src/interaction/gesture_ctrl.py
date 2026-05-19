@@ -4,7 +4,7 @@ from collections import deque
 
 class GestureController:
 
-    def __init__(self, confirmation_threshold=10, cooldown=2.0, history_size=8):
+    def __init__(self, confirmation_threshold=10, cooldown=2.0, history_size=5):
         self.confirmation_threshold = confirmation_threshold
         self.cooldown = cooldown
 
@@ -17,9 +17,9 @@ class GestureController:
         self.is_paused = False
         self.active_action = "None"
 
-        self.history_size = 8
-        self.x_history = deque(maxlen=8)
-        self.swipe_threshold = 0.10
+        self.history_size = 5
+        self.x_history = deque(maxlen=5)
+        self.swipe_threshold = 0.07
 
     def update(self, current_command, hand_landmarks=None):
         now = time.time()
