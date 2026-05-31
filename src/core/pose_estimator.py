@@ -34,7 +34,7 @@ class PoseEstimator:
         else:
             self.current_landmarks = None
 
-    def process_frame(self, frame):
+    def process_frame(self, frame, draw_angles=False):
         rgb_frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
         rgb_frame = np.ascontiguousarray(rgb_frame)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
@@ -46,43 +46,44 @@ class PoseEstimator:
         landmarks = self.current_landmarks 
         
         if landmarks:
-            hip_r, knee_r, ankle_r, elbow_r, sholder_r, wrist_r = [landmarks[24].x, landmarks[24].y], [landmarks[26].x, landmarks[26].y], [landmarks[28].x, landmarks[28].y], [landmarks[14].x,landmarks[14].y], [landmarks[12].x, landmarks[12].y], [landmarks[16].x,landmarks[16].y]
-            hip_l, knee_l, ankle_l, elbow_l, sholder_l, wrist_l = [landmarks[23].x, landmarks[23].y], [landmarks[25].x, landmarks[25].y], [landmarks[27].x, landmarks[27].y], [landmarks[13].x,landmarks[13].y], [landmarks[11].x, landmarks[11].y], [landmarks[15].x,landmarks[15].y]
+            hip_r, knee_r, ankle_r, elbow_r, shoulder_r, wrist_r = [landmarks[24].x, landmarks[24].y], [landmarks[26].x, landmarks[26].y], [landmarks[28].x, landmarks[28].y], [landmarks[14].x,landmarks[14].y], [landmarks[12].x, landmarks[12].y], [landmarks[16].x,landmarks[16].y]
+            hip_l, knee_l, ankle_l, elbow_l, shoulder_l, wrist_l = [landmarks[23].x, landmarks[23].y], [landmarks[25].x, landmarks[25].y], [landmarks[27].x, landmarks[27].y], [landmarks[13].x,landmarks[13].y], [landmarks[11].x, landmarks[11].y], [landmarks[15].x,landmarks[15].y]
 
             angles['knee_r'] = calculate_angle(hip_r, knee_r, ankle_r)
             angles['knee_l'] = calculate_angle(hip_l, knee_l, ankle_l)
 
-            angles['sholder_r'] = calculate_angle(hip_r,sholder_r, elbow_r)
-            angles['sholder_l'] = calculate_angle(hip_l, sholder_l, elbow_l) 
+            angles['shoulder_r'] = calculate_angle(hip_r,shoulder_r, elbow_r)
+            angles['shoulder_l'] = calculate_angle(hip_l, shoulder_l, elbow_l)
+            
+            angles['hip_r'] = calculate_angle(shoulder_r, hip_r, knee_r)
+            angles['hip_l'] = calculate_angle(shoulder_l, hip_l, knee_l)
 
-            angles['hip_r'] = calculate_angle(sholder_r, hip_r, knee_r)
-            angles['hip_l'] = calculate_angle(sholder_l, hip_l, knee_l)
-
-            angles['elbow_r'] = calculate_angle(wrist_r, elbow_r, sholder_r)
-            angles['elbow_l'] = calculate_angle(wrist_l, elbow_l, sholder_l)
+            angles['elbow_r'] = calculate_angle(wrist_r, elbow_r, shoulder_r)
+            angles['elbow_l'] = calculate_angle(wrist_l, elbow_l, shoulder_l)
         
 
-            h, w, _ = frame.shape
+            if draw_angles:
+                h, w, _ = frame.shape
 
-            pos_bottom_r = tuple(np.multiply(knee_r, [w, h]).astype(int))
-            cv.putText(frame, str(int(angles['knee_r'])), pos_bottom_r, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
-            pos_bottom_l = tuple(np.multiply(knee_l, [w, h]).astype(int))
-            cv.putText(frame, str(int(angles['knee_l'])), pos_bottom_l, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
+                pos_bottom_r = tuple(np.multiply(knee_r, [w, h]).astype(int))
+                cv.putText(frame, str(int(angles['knee_r'])), pos_bottom_r, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
+                pos_bottom_l = tuple(np.multiply(knee_l, [w, h]).astype(int))
+                cv.putText(frame, str(int(angles['knee_l'])), pos_bottom_l, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
 
-            pos_mid_r = tuple(np.multiply(hip_r, [w, h]).astype(int))
-            cv.putText(frame, str(int(angles['hip_r'])), pos_mid_r, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
-            pos_mid_l = tuple(np.multiply(hip_l, [w, h]).astype(int))
-            cv.putText(frame, str(int(angles['hip_l'])), pos_mid_l, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
-            
-            pos_top_r = tuple(np.multiply(sholder_r, [w, h]).astype(int))
-            cv.putText(frame, str(int(angles['sholder_r'])), pos_top_r, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
-            pos_top_l = tuple(np.multiply(sholder_l, [w, h]).astype(int))
-            cv.putText(frame, str(int(angles['sholder_l'])), pos_top_l, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
-            
-            pos_elbow_r = tuple(np.multiply(elbow_r, [w, h]).astype(int))
-            cv.putText(frame, str(int(angles['elbow_r'])), pos_elbow_r, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
-            pos_elbow_l = tuple(np.multiply(elbow_l, [w, h]).astype(int))
-            cv.putText(frame, str(int(angles['elbow_l'])), pos_elbow_l, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
+                pos_mid_r = tuple(np.multiply(hip_r, [w, h]).astype(int))
+                cv.putText(frame, str(int(angles['hip_r'])), pos_mid_r, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
+                pos_mid_l = tuple(np.multiply(hip_l, [w, h]).astype(int))
+                cv.putText(frame, str(int(angles['hip_l'])), pos_mid_l, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
+
+                pos_top_r = tuple(np.multiply(shoulder_r, [w, h]).astype(int))
+                cv.putText(frame, str(int(angles['shoulder_r'])), pos_top_r, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
+                pos_top_l = tuple(np.multiply(shoulder_l, [w, h]).astype(int))
+                cv.putText(frame, str(int(angles['shoulder_l'])), pos_top_l, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
+
+                pos_elbow_r = tuple(np.multiply(elbow_r, [w, h]).astype(int))
+                cv.putText(frame, str(int(angles['elbow_r'])), pos_elbow_r, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
+                pos_elbow_l = tuple(np.multiply(elbow_l, [w, h]).astype(int))
+                cv.putText(frame, str(int(angles['elbow_l'])), pos_elbow_l, cv.FONT_HERSHEY_SCRIPT_COMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
             
         return landmarks, angles
 
@@ -98,4 +99,3 @@ class PoseEstimator:
             draw_points(frame, landmarks)
                 
         return frame  
-      

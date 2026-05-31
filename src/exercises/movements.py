@@ -213,7 +213,7 @@ class PushUp(BaseExercise):
         hip = self.avg(angles.get("hip_r", 180), angles.get("hip_l", 180))
         if hip < 150:
             err.append("Do not raise your hips, maintain a straight body line!")
-        if hip > 190:
+        if hip > 175:
             err.append("Your hips are sagging too low!")
         shoulder = self.avg(angles.get("shoulder_r", 90), angles.get("shoulder_l", 90))
         if shoulder > 60:

@@ -1,0 +1,68 @@
+[
+  {
+    "date": "2026-05-29",
+    "time": "16:44:11",
+    "exercise_key": "tricep_extension",
+    "exercise": "TRICEP EXTENSION",
+    "target_type": "reps",
+    "target_value": 12,
+    "reps": 12,
+    "elapsed_seconds": 23,
+    "status": "completed"
+  },
+  {
+    "date": "2026-05-29",
+    "time": "23:16:50",
+    "exercise_key": "plank",
+    "exercise": "PLANK",
+    "target_type": "seconds",
+    "target_value": 30,
+    "reps": 0,
+    "elapsed_seconds": 30,
+    "status": "completed"
+  },
+  {
+    "date": "2026-05-29",
+    "time": "23:50:22",
+    "exercise_key": "plank",
+    "exercise": "PLANK",
+    "target_type": "seconds",
+    "target_value": 30,
+    "reps": 0,
+    "elapsed_seconds": 30,
+    "status": "completed"
+  },
+  {
+    "date": "2026-05-30",
+    "time": "00:22:00",
+    "exercise_key": "plank",
+    "exercise": "PLANK",
+    "target_type": "seconds",
+    "target_value": 10,
+    "reps": 0,
+    "elapsed_seconds": 10,
+    "status": "completed"
+  },
+  {
+    "date": "2026-05-31",
+    "time": "23:21:56",
+    "exercise_key": "tricep_extension",
+    "exercise": "TRICEP EXTENSION",
+    "target_type": "reps",
+    "target_value": 12,
+    "reps": 12,
+    "elapsed_seconds": 48,
+    "status": "completed"
+  },
+  {
+    "date": "2026-05-31",
+    "time": "23:23:24",
+    "exercise_key": "tricep_extension",
+    "exercise": "TRICEP EXTENSION",
+    "target_type": "reps",
+    "target_value": 12,
+    "reps": 12,
+    "elapsed_seconds": 32,
+    "status": "completed"
+  }
+]
