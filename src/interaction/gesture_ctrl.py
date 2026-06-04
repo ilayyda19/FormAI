@@ -50,12 +50,6 @@ class GestureController:
 
         self._clear_point_tracking()
 
-        if self.selector_active and current_command == "THUMBS":
-            self.selector_active = False
-            self.active_action = "CLOSE_SELECTOR"
-            self.selector_locked_until = now + self.selector_reopen_delay
-            self._clear_point_tracking()
-            return "CLOSE_SELECTOR"
 
         if self.selector_active:
             self.active_action = "SELECTOR_ACTIVE"
@@ -163,6 +157,10 @@ class GestureController:
         if command == "OPEN HAND":
             self.active_action = "TOGGLE_SKELETON"
             return "TOGGLE_SKELETON"
+        
+        if command == "THUMBS":
+            self.active_action = "START_WORKOUT"
+            return "START_WORKOUT"
 
         return None
 

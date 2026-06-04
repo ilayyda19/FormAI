@@ -1,8 +1,6 @@
 import cv2 as cv
 import numpy as np
 
-import cv2 as cv
-import numpy as np
 
 def draw_skeleton(frame, landmarks, connections, color=(255, 160, 0), thickness=3):
     for start_idx, end_idx in connections:

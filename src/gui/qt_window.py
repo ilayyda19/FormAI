@@ -1,19 +1,25 @@
 import sys
 import time
-import json
 import cv2 as cv
-import matplotlib
 
-matplotlib.use("QtAgg")
-import matplotlib.pyplot as plt
 
 from pathlib import Path
-from datetime import datetime, timedelta
-from calendar import monthrange
-from collections import Counter
+from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer, QRectF
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont
+from src.core.hand_gestures import GestureAnalyz
+from src.core.hand_landmarker import HandLandmarker
+from src.core.pose_estimator import PoseEstimator
+from src.exercises.movements import EXERCISE_REGISTRY, get_exercise
+from src.interaction.feedback_engine import FeedbackEngine
+from src.interaction.gesture_ctrl import GestureController
+from src.services.workout_history_manager import WorkoutHistoryManager
+from src.gui.workout_history_dialog import WorkoutHistoryDialog
+from src.gui.settings_dialog import SettingsDialog
+
+from src.interaction.voice_command import VoiceCommandListener
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QImage, QPixmap
+from src.gui.progress_ring import ProgressRing
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -32,13 +38,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-from src.core.hand_gestures import GestureAnalyz
-from src.core.hand_landmarker import HandLandmarker
-from src.core.pose_estimator import PoseEstimator
-from src.exercises.movements import EXERCISE_REGISTRY, get_exercise
-from src.interaction.feedback_engine import FeedbackEngine
-from src.interaction.gesture_ctrl import GestureController
 
 
 DEFAULT_TARGETS = {
@@ -59,50 +58,6 @@ DEFAULT_TARGETS = {
 BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = BASE_DIR / "datas"
 HISTORY_FILE = DATA_DIR / "workout_history.json"
-
-
-class ProgressRing(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.progress = 0.0
-        self.value_text = "0"
-        self.target_text = "/0"
-        self.setFixedSize(120, 120)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-
-    def set_progress(self, progress, value_text, target_text):
-        self.progress = max(0.0, min(float(progress), 1.0))
-        self.value_text = str(value_text)
-        self.target_text = str(target_text)
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        rect = QRectF(14, 14, self.width() - 28, self.height() - 28)
-
-        bg_pen = QPen(QColor("#3e3e42"), 8)
-        bg_pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(bg_pen)
-        painter.drawArc(rect, 0, 360 * 16)
-
-        progress_pen = QPen(QColor("#22c55e"), 8)
-        progress_pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(progress_pen)
-        painter.drawArc(rect, 90 * 16, -int(360 * self.progress * 16))
-
-        painter.setPen(QColor("#d4d4d4"))
-        painter.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
-        painter.drawText(self.rect(), Qt.AlignCenter, self.value_text)
-
-        painter.setPen(QColor("#858585"))
-        painter.setFont(QFont("Segoe UI", 9))
-        painter.drawText(
-            QRectF(0, self.height() / 2 + 24, self.width(), 24),
-            Qt.AlignCenter,
-            self.target_text,
-        )
 
 
 class QtAppWindow(QWidget):
@@ -204,6 +159,12 @@ class QtAppWindow(QWidget):
                 background-color: #2d2d30;
                 border: 1px solid #3e3e42;
                 border-radius: 10px;
+            }
+
+            QLabel#FeedbackLabel {
+                background-color: transparent;
+                color: #d4d4d4;
+                font-weight: 600;
             }
 
             QPushButton#FullscreenButton {
@@ -310,10 +271,6 @@ class QtAppWindow(QWidget):
         self.camera_phase_label.setObjectName("CameraStatusPill")
         self.camera_phase_label.hide()
 
-        self.camera_action_label = QLabel("Action  IDLE", self.camera_container)
-        self.camera_action_label.setObjectName("CameraStatusPill")
-        self.camera_action_label.hide()
-
         self.camera_subtitle_label = QLabel("", self.camera_container)
         self.camera_subtitle_label.setObjectName("CameraSubtitleLabel")
         self.camera_subtitle_label.setAlignment(Qt.AlignCenter)
@@ -322,10 +279,11 @@ class QtAppWindow(QWidget):
 
         self.last_subtitle_text = ""
         self.last_subtitle_time = 0.0
+        self.feedback_priority_until = 0.0
 
         self.subtitle_hide_timer = QTimer(self)
         self.subtitle_hide_timer.setSingleShot(True)
-        self.subtitle_hide_timer.timeout.connect(self.camera_subtitle_label.hide)
+        self.subtitle_hide_timer.timeout.connect(self.clear_camera_subtitle)
 
         self.is_fullscreen_mode = False
 
@@ -356,6 +314,7 @@ class QtAppWindow(QWidget):
         self.status_label = QLabel("System: IDLE")
         self.gesture_status_label = QLabel("Gestures: ON")
         self.feedback_label = QLabel("Feedback: Ready")
+        self.feedback_label.setObjectName("FeedbackLabel")
         self.feedback_label.setWordWrap(True)
 
         self.data_layout.addWidget(self.progress_ring, alignment=Qt.AlignCenter)
@@ -390,10 +349,26 @@ class QtAppWindow(QWidget):
         self.gesture_analyzer = GestureAnalyz()
         self.gesture_controller = GestureController()
 
+        self.app_settings = {
+            "voice_feedback":    True,
+            "subtitle_feedback": True,
+            "hand_gestures":     True,
+            "voice_commands": True,
+        }
+
+
         self.feedback = FeedbackEngine(lang="en")
         self.feedback.on_message = self.on_feedback_message
         self.feedback.on_rep = self.on_feedback_rep
         self.feedback.start()
+
+        self.pending_voice_command = None
+        self.voice_listener = VoiceCommandListener(lang="en-US")
+        self.voice_listener.on_command = self.queue_voice_command
+        self.voice_listener.on_status = self.on_voice_status
+
+        if self.voice_listener.available and self.app_settings.get("voice_commands", True):
+            self.voice_listener.start()
 
         self.exercise_keys = list(EXERCISE_REGISTRY.keys())
         self.current_ex_idx = 0
@@ -406,14 +381,9 @@ class QtAppWindow(QWidget):
             key: target.copy()
             for key, target in DEFAULT_TARGETS.items()
         }
+        self.history_manager = WorkoutHistoryManager(HISTORY_FILE)
 
-        
-        self.app_settings = {
-            "voice_feedback":    True,
-            "subtitle_feedback": True,
-            "hand_gestures":     True,
-        }
-
+    
         self.workout_state = "idle"
         self.countdown_start_time = None
         self.countdown_seconds = 3
@@ -426,6 +396,9 @@ class QtAppWindow(QWidget):
         self.elapsed_seconds = 0
         self.last_gesture = "None"
 
+        self.frame_index = 0
+        self.hand_detection_interval = 3
+
         self.target_type = "reps"
         self.target_value = 12
         self.update_current_target()
@@ -437,7 +410,7 @@ class QtAppWindow(QWidget):
         self.timer.timeout.connect(self.update_camera_frame)
         self.timer.start(30)
 
-        self.start_button.clicked.connect(self.start_countdown)
+        self.start_button.clicked.connect(self.on_start_stop_clicked)
         self.choose_button.clicked.connect(self.open_exercise_dialog)
         self.history_button.clicked.connect(self.open_history_dialog)
         self.settings_button.clicked.connect(self.open_settings_dialog)
@@ -448,189 +421,16 @@ class QtAppWindow(QWidget):
    
 
     def open_settings_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Settings")
-        dialog.resize(400, 340)
-
-        dialog.setStyleSheet("""
-            QDialog {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-            }
-            QLabel {
-                color: #d4d4d4;
-                background: transparent;
-                border: none;
-            }
-            QLabel#STitle {
-                color: #22c55e;
-                font-size: 20px;
-                font-weight: 700;
-            }
-            QLabel#SSub {
-                color: #858585;
-                font-size: 12px;
-            }
-            QFrame#SRow {
-                background-color: #2d2d30;
-                border: 1px solid #3e3e42;
-                border-radius: 10px;
-            }
-            QPushButton {
-                background-color: #2d2d30;
-                border: 1px solid #22c55e;
-                border-radius: 8px;
-                padding: 10px 16px;
-                color: #d4d4d4;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #14532d;
-            }
-        """)
-
-        main = QVBoxLayout(dialog)
-        main.setContentsMargins(24, 24, 24, 20)
-        main.setSpacing(14)
-
-        title = QLabel("Settings")
-        title.setObjectName("STitle")
-        main.addWidget(title)
-
-        ROWS = [
-            (
-                "voice_feedback",
-                "🔊",
-                "Voice Feedback",
-                "Read the exercise tips aloud.",
-            ),
-            (
-                "subtitle_feedback",
-                "💬",
-                "Subtitle Feedback",
-                "Display feedback text on the screen",
-            ),
-            (
-                "hand_gestures",
-                "✋",
-                "Hand Gestures",
-                "Control the training with hand movements.",
-            ),
-        ]
-
-        toggle_buttons: dict[str, QPushButton] = {}
-
-        def make_toggle_style(active: bool) -> str:
-            if active:
-                return (
-                    "QPushButton {"
-                    "  background-color: #22c55e;"
-                    "  border: 1px solid #22c55e;"
-                    "  color: #0a0a0a;"
-                    "  border-radius: 13px;"
-                    "  font-size: 11px;"
-                    "  font-weight: 700;"
-                    "  min-width: 54px; max-width: 54px;"
-                    "  min-height: 26px; max-height: 26px;"
-                    "  padding: 0px;"
-                    "}"
-                    "QPushButton:hover {"
-                    "  background-color: #16a34a;"
-                    "}"
-                )
-            else:
-                return (
-                    "QPushButton {"
-                    "  background-color: #3e3e42;"
-                    "  border: 1px solid #3e3e42;"
-                    "  color: #858585;"
-                    "  border-radius: 13px;"
-                    "  font-size: 11px;"
-                    "  font-weight: 700;"
-                    "  min-width: 54px; max-width: 54px;"
-                    "  min-height: 26px; max-height: 26px;"
-                    "  padding: 0px;"
-                    "}"
-                    "QPushButton:hover {"
-                    "  background-color: #4e4e52;"
-                    "}"
-                )
-
-        def apply_settings_now():
-           
-            if hasattr(self.feedback, "voice_enabled"):
-                self.feedback.voice_enabled = self.app_settings.get("voice_feedback", True)
-
-            self.feedback.on_message = self.on_feedback_message
-
-            if not self.app_settings.get("subtitle_feedback", True):
-                self.camera_subtitle_label.hide()
-
-            
-            self.gesture_controller.gestures_enabled = self.app_settings.get(
-                "hand_gestures", True
-            )
-            state = "ON" if self.app_settings.get("hand_gestures", True) else "OFF"
-            self.gesture_status_label.setText(f"Gestures: {state}")
-
-        def on_toggle(key: str, btn: QPushButton):
-            new_val = not self.app_settings.get(key, True)
-            self.app_settings[key] = new_val
-            btn.setText("ON" if new_val else "OFF")
-            btn.setStyleSheet(make_toggle_style(new_val))
-            apply_settings_now()
-
-        for key, icon, label_text, sub_text in ROWS:
-            row = QFrame()
-            row.setObjectName("SRow")
-            row_h = QHBoxLayout(row)
-            row_h.setContentsMargins(16, 12, 16, 12)
-            row_h.setSpacing(12)
-
-            icon_lbl = QLabel(icon)
-            icon_lbl.setStyleSheet(
-                "font-size: 18px; background: transparent; border: none;"
-            )
-            icon_lbl.setFixedWidth(28)
-
-            text_col = QVBoxLayout()
-            text_col.setSpacing(2)
-
-            lbl = QLabel(label_text)
-            lbl.setStyleSheet(
-                "font-weight: 700; font-size: 13px;"
-                "background: transparent; border: none;"
-            )
-
-            sub = QLabel(sub_text)
-            sub.setObjectName("SSub")
-
-            text_col.addWidget(lbl)
-            text_col.addWidget(sub)
-
-            active = self.app_settings.get(key, True)
-            toggle = QPushButton("ON" if active else "OFF")
-            toggle.setCursor(Qt.PointingHandCursor)
-            toggle.setStyleSheet(make_toggle_style(active))
-            toggle.clicked.connect(
-                lambda checked=False, k=key, b=toggle: on_toggle(k, b)
-            )
-            toggle_buttons[key] = toggle
-
-            row_h.addWidget(icon_lbl)
-            row_h.addLayout(text_col, stretch=1)
-            row_h.addWidget(toggle)
-
-            main.addWidget(row)
-
-        main.addStretch()
-
-        done_row = QHBoxLayout()
-        done_btn = QPushButton("DONE")
-        done_btn.clicked.connect(dialog.accept)
-        done_row.addStretch()
-        done_row.addWidget(done_btn)
-        main.addLayout(done_row)
+        dialog = SettingsDialog(
+            settings=self.app_settings,
+            feedback=self.feedback,
+            on_feedback_message=self.on_feedback_message,
+            camera_subtitle_label=self.camera_subtitle_label,
+            gesture_controller=self.gesture_controller,
+            gesture_status_label=self.gesture_status_label,
+            voice_listener=self.voice_listener,
+            parent=self,
+        )
 
         dialog.exec()
 
@@ -671,7 +471,6 @@ class QtAppWindow(QWidget):
         status_labels = [
             self.camera_gesture_label,
             self.camera_phase_label,
-            self.camera_action_label,
         ]
 
         if not self.is_fullscreen_mode:
@@ -729,6 +528,18 @@ class QtAppWindow(QWidget):
         self.camera_subtitle_label.raise_()
         self.fullscreen_button.raise_()
 
+    def clear_camera_subtitle(self):
+        if not hasattr(self, "camera_subtitle_label"):
+            return
+
+        if hasattr(self, "subtitle_hide_timer") and self.subtitle_hide_timer.isActive():
+            self.subtitle_hide_timer.stop()
+
+        self.camera_subtitle_label.clear()
+        self.camera_subtitle_label.hide()
+        self.last_subtitle_text = ""
+        self.last_subtitle_time = 0.0
+
     def update_camera_overlay_text(self):
         key = self.exercise_keys[self.current_ex_idx]
         exercise_name = key.replace("_", " ").upper()
@@ -736,11 +547,9 @@ class QtAppWindow(QWidget):
         self.camera_exercise_name_label.setText(exercise_name)
         self.camera_exercise_state_label.setText(self.workout_state.upper())
 
-        self.camera_gesture_label.setText(
-            f"Gesture {getattr(self, 'last_gesture', 'None')}"
-        )
+        gesture_state = "ON" if self.gesture_controller.gestures_enabled else "OFF"
+        self.camera_gesture_label.setText(f"Gestures  {gesture_state}")
         self.camera_phase_label.setText(f"Phase  {self.phase.upper()}")
-        self.camera_action_label.setText(f"Action  {self.workout_state.upper()}")
 
         image = self.exercise_images.get(key)
         if image is None:
@@ -823,24 +632,35 @@ class QtAppWindow(QWidget):
         self.feedback_label.setText(f"Feedback: {text}")
 
         if not self.app_settings.get("subtitle_feedback", True):
-            self.camera_subtitle_label.hide()
+            self.clear_camera_subtitle()
             return
         
         now = time.time()
+
+        is_warning = color == "#F39C12"
+        is_error = color == "#E74C3C"
+        is_ok = color == "#2ECC71"
+
+        if is_warning or is_error:
+            self.feedback_priority_until = now + 2.5
+
+        if is_ok and now < self.feedback_priority_until:
+            return
+        
         same_text = text == self.last_subtitle_text
 
-        if same_text and now - self.last_subtitle_time < 0.8:
+        if same_text and now - self.last_subtitle_time < 0.8 and self.camera_subtitle_label.isVisible():
             self.subtitle_hide_timer.start(2200)
             return
 
+        self.subtitle_hide_timer.stop()
         self.camera_subtitle_label.setText(text)
         self.position_camera_subtitle()
 
         self.last_subtitle_text = text
         self.last_subtitle_time = now
 
-        self.camera_subtitle_label.setText(text)
-        self.position_camera_subtitle()
+    
         self.subtitle_hide_timer.start(2200)
 
     
@@ -848,9 +668,92 @@ class QtAppWindow(QWidget):
         self.reps = n
         self.reps_label.setText(f"Reps: {self.reps}")
 
+    def queue_voice_command(self, command):
+        self.pending_voice_command = command
+
+
+    def on_voice_status(self, text):
+        try:
+            self.feedback_label.setText(text)
+        except RuntimeError:
+            pass
+
+
+    def process_pending_voice_command(self):
+        command = self.pending_voice_command
+        self.pending_voice_command = None
+
+        if not command:
+            return
+
+        self.handle_voice_command(command)
+
+
+    def handle_voice_command(self, command):
+        if command == "START":
+            self.start_countdown()
+
+        elif command == "PAUSE":
+            if self.workout_state == "running":
+                self.workout_state = "paused"
+                self.status_label.setText("System: PAUSED")
+
+        elif command == "RESUME":
+            if self.workout_state == "paused":
+                self.workout_state = "running"
+                self.status_label.setText("System: RUNNING")
+
+        elif command in ("STOP", "RESET"):
+             self.cancel_workout()
+
+        elif command.startswith("EXERCISE:"):
+            key = command.split(":", 1)[1]
+            if key in self.exercise_keys:
+                index = self.exercise_keys.index(key)
+                self.select_exercise(index)
+
+    
+    def on_start_stop_clicked(self):
+        if self.workout_state in ("running", "paused", "countdown"):
+            self.cancel_workout()
+        else:
+            self.start_countdown()
+    def cancel_workout(self):
+        self.workout_state = "idle"
+        self.countdown_start_time = None
+        self.workout_started_at = None
+        self.workout_saved = False
+        self.workout_feedback_announced = False
+        self.gesture_controller.is_paused = False
+
+        self.reps = 0
+        self.phase = "rest"
+        self.elapsed_seconds = 0
+
+        self.message_label.hide()
+        self.countdown_label.hide()
+
+        self.clear_camera_subtitle()
+
+        self.reps_label.setText("Reps: 0")
+        self.status_label.setText("System: IDLE")
+        self.feedback_label.setText("Feedback: Ready")
+
+        self.update_current_target()
+        self.update_progress_ring()
+        self.update_start_button_text()
+
+    def update_start_button_text(self):
+        if self.workout_state in ("running", "paused", "countdown"):
+            self.start_button.setText("CANCEL")
+        else:
+            self.start_button.setText("START")
+
+
 
     def start_countdown(self):
-        if self.workout_state in ("countdown", "running"):
+        if self.workout_state in ("countdown", "running", "paused"):
+        
             return
 
         self.current_exercise = get_exercise(self.exercise_keys[self.current_ex_idx])
@@ -864,14 +767,17 @@ class QtAppWindow(QWidget):
 
         self.update_current_target()
         self.update_progress_ring()
+        self.feedback.set_target(self.target_value)
 
         self.reps_label.setText("Reps: 0")
         self.status_label.setText("System: COUNTDOWN")
         self.feedback_label.setText("Feedback: Ready")
+        self.clear_camera_subtitle()
         self.message_label.hide()
 
         self.workout_state = "countdown"
         self.countdown_start_time = time.time()
+        self.update_start_button_text()
 
     def update_countdown(self):
         if self.workout_state != "countdown" or self.countdown_start_time is None:
@@ -897,6 +803,7 @@ class QtAppWindow(QWidget):
         self.workout_state = "running"
         self.countdown_start_time = None
         self.status_label.setText("System: RUNNING")
+        self.update_start_button_text()
 
     def finish_workout(self):
         if self.workout_state == "finished":
@@ -904,6 +811,7 @@ class QtAppWindow(QWidget):
 
         self.workout_state = "finished"
         self.status_label.setText("System: FINISHED")
+        self.update_start_button_text()
 
         if not self.workout_saved:
             self.save_workout_record()
@@ -923,26 +831,14 @@ class QtAppWindow(QWidget):
         self.message_label.raise_()
         self.position_camera_overlays()
         self.position_fullscreen_button()
+        QTimer.singleShot(5000, self.message_label.hide)
 
 
     def load_workout_history(self):
-        if not HISTORY_FILE.exists():
-            return []
+        return self.history_manager.load()
 
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as file:
-                history = json.load(file)
-
-            if isinstance(history, list):
-                return history
-
-            return []
-
-        except (json.JSONDecodeError, OSError):
-            return []
 
     def save_workout_record(self):
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
 
         now = datetime.now()
         exercise_key = self.get_current_exercise_key()
@@ -960,14 +856,7 @@ class QtAppWindow(QWidget):
             "status": "completed",
         }
 
-        history = self.load_workout_history()
-        history.append(record)
-
-        with open(HISTORY_FILE, "w", encoding="utf-8") as file:
-            json.dump(history, file, ensure_ascii=False, indent=2)
-
-        print("Saved workout to:", HISTORY_FILE)
-
+        self.history_manager.append(record)
 
     def open_exercise_dialog(self):
         if self.workout_state in ("countdown", "running"):
@@ -1142,493 +1031,16 @@ class QtAppWindow(QWidget):
             self.status_label.setText(f"System: {self.workout_state.upper()}")
 
         self.feedback_label.setText("Feedback: Ready")
+        self.clear_camera_subtitle()
         self.update_current_target()
         self.update_progress_ring()
+        self.update_start_button_text()
 
-
-    def create_history_stat_card(self, value, label):
-        card = QFrame()
-        card.setObjectName("HistoryStatCard")
-
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(4)
-
-        value_label = QLabel(value)
-        value_label.setObjectName("HistoryStatValue")
-        value_label.setAlignment(Qt.AlignCenter)
-
-        text_label = QLabel(label)
-        text_label.setObjectName("HistoryStatLabel")
-        text_label.setAlignment(Qt.AlignCenter)
-
-        layout.addWidget(value_label)
-        layout.addWidget(text_label)
-
-        return card
-
-    def create_history_card(self, record):
-        card = QFrame()
-        card.setObjectName("HistoryCard")
-
-        card_layout = QHBoxLayout(card)
-        card_layout.setContentsMargins(16, 12, 16, 12)
-        card_layout.setSpacing(12)
-
-        exercise = record.get("exercise", "UNKNOWN")
-        date = record.get("date", "")
-        time_text = record.get("time", "")
-
-        reps = int(record.get("reps") or 0)
-        elapsed = int(record.get("elapsed_seconds") or 0)
-        target_value = int(record.get("target_value") or 0)
-        target_type = record.get("target_type", "reps")
-
-        if target_type == "seconds":
-            current_value = elapsed
-            unit = "sec"
-        else:
-            current_value = reps
-            unit = "reps"
-
-        completed = target_value > 0 and current_value >= target_value
-        status_text = "Completed" if completed else "Incomplete"
-        status_object = "HistoryStatusDone" if completed else "HistoryStatusMissing"
-
-        left_layout = QVBoxLayout()
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(4)
-
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.setSpacing(8)
-
-        title_label = QLabel(exercise.title())
-        title_label.setObjectName("HistoryCardTitle")
-
-        status_label = QLabel(status_text)
-        status_label.setObjectName(status_object)
-
-        title_row.addWidget(title_label)
-        title_row.addWidget(status_label)
-        title_row.addStretch()
-
-        date_label = QLabel(f"{date}  {time_text}")
-        date_label.setObjectName("HistoryCardDate")
-
-        left_layout.addLayout(title_row)
-        left_layout.addWidget(date_label)
-
-        result_layout = QVBoxLayout()
-        result_layout.setContentsMargins(0, 0, 0, 0)
-        result_layout.setSpacing(2)
-
-        result_label = QLabel(f"{current_value} / {target_value}")
-        result_label.setObjectName("HistoryCardResult")
-        result_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-
-        result_hint = QLabel(f"target {unit}")
-        result_hint.setObjectName("HistoryCardDate")
-        result_hint.setAlignment(Qt.AlignmentFlag.AlignRight)
-
-        result_layout.addWidget(result_label)
-        result_layout.addWidget(result_hint)
-
-        card_layout.addLayout(left_layout, stretch=1)
-        card_layout.addLayout(result_layout)
-
-        return card
 
     def open_history_dialog(self):
         history = self.load_workout_history()
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Workout History")
-        dialog.resize(600, 680)
-
-        dialog.setStyleSheet("""
-            QDialog {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-            }
-
-            QLabel#HistoryTitle {
-                color: #22c55e;
-                font-size: 24px;
-                font-weight: 700;
-            }
-
-            QLabel#HistorySubtitle {
-                color: #858585;
-                font-size: 13px;
-                font-weight: 400;
-            }
-
-            QLabel#HistoryEmpty {
-                color: #858585;
-                font-size: 14px;
-                padding: 20px;
-            }
-
-            QScrollArea {
-                background-color: transparent;
-                border: none;
-            }
-
-            QScrollArea QWidget {
-                background-color: transparent;
-            }
-
-            QFrame#HistoryCard {
-                background-color: #252526;
-                border: 1px solid #3e3e42;
-                border-radius: 10px;
-            }
-
-            QFrame#HistoryStatCard {
-                background-color: #171717;
-                border: 1px solid #2a2a2a;
-                border-radius: 10px;
-            }
-
-            QLabel#HistoryStatValue {
-                color: #22c55e;
-                font-size: 26px;
-                font-weight: 800;
-            }
-
-            QLabel#HistoryStatLabel {
-                color: #858585;
-                font-size: 11px;
-                font-weight: 700;
-            }
-
-            QLabel#HistoryCardTitle {
-                color: #d4d4d4;
-                font-size: 14px;
-                font-weight: 700;
-            }
-
-            QLabel#HistoryCardDate {
-                color: #858585;
-                font-size: 12px;
-            }
-
-            QLabel#HistoryCardResult {
-                color: #22c55e;
-                font-size: 14px;
-                font-weight: 700;
-            }
-
-            QLabel#HistoryStatusDone {
-                background-color: #14532d;
-                color: #22c55e;
-                border: 1px solid #22c55e;
-                border-radius: 8px;
-                padding: 2px 8px;
-                font-size: 11px;
-                font-weight: 700;
-            }
-
-            QLabel#HistoryStatusMissing {
-                background-color: #3b2a08;
-                color: #f59e0b;
-                border: 1px solid #f59e0b;
-                border-radius: 8px;
-                padding: 2px 8px;
-                font-size: 11px;
-                font-weight: 700;
-            }
-
-            QPushButton {
-                background-color: #2d2d30;
-                border: 1px solid #22c55e;
-                border-radius: 8px;
-                padding: 8px 14px;
-                color: #d4d4d4;
-                font-weight: 600;
-            }
-
-            QPushButton#HistoryFilterButton {
-                background-color: #202020;
-                border: 1px solid #2a2a2a;
-                border-radius: 14px;
-                padding: 6px 14px;
-                color: #858585;
-                font-weight: 600;
-                font-size: 12px;
-            }
-
-            QPushButton#HistoryFilterButton:hover {
-                background-color: #14532d;
-                border: 1px solid #22c55e;
-                color: #22c55e;
-            }
-
-            QPushButton:hover {
-                background-color: #14532d;
-            }
-        """)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(22, 22, 22, 22)
-        layout.setSpacing(12)
-
-        title = QLabel("Workout History")
-        title.setObjectName("HistoryTitle")
-
-        subtitle = QLabel("All completed exercise records")
-        subtitle.setObjectName("HistorySubtitle")
-
-        total_count = len(history)
-        today = datetime.now().date()
-        week_start = today - timedelta(days=6)
-        week_count = 0
-        completed_count = 0
-
-        for record in history:
-            reps = int(record.get("reps") or 0)
-            elapsed = int(record.get("elapsed_seconds") or 0)
-            target_value = int(record.get("target_value") or 0)
-            target_type = record.get("target_type", "reps")
-
-            current_val = elapsed if target_type == "seconds" else reps
-            if target_value > 0 and current_val >= target_value:
-                completed_count += 1
-
-            date_text = record.get("date")
-            if not date_text:
-                continue
-            try:
-                record_date = datetime.strptime(date_text, "%Y-%m-%d").date()
-                if week_start <= record_date <= today:
-                    week_count += 1
-            except ValueError:
-                continue
-
-        success_rate = int((completed_count / total_count) * 100) if total_count else 0
-
-        stats_layout = QHBoxLayout()
-        stats_layout.setSpacing(10)
-        stats_layout.addWidget(self.create_history_stat_card(str(total_count), "TOTAL"))
-        stats_layout.addWidget(self.create_history_stat_card(str(week_count), "THIS WEEK"))
-        stats_layout.addWidget(self.create_history_stat_card(f"{success_rate}%", "SUCCESS RATE"))
-
-        filter_layout = QHBoxLayout()
-        filter_layout.setSpacing(8)
-
-        filter_buttons = {
-            "All": "all",
-            "This Week": "week",
-            "This Month": "month",
-        }
-        for label, filter_name in filter_buttons.items():
-            btn = QPushButton(label)
-            btn.setObjectName("HistoryFilterButton")
-            btn.clicked.connect(lambda checked=False, name=filter_name: refresh_history_cards(name))
-            filter_layout.addWidget(btn)
-        filter_layout.addStretch()
-
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(8)
-
-        def clear_history_cards():
-            while content_layout.count():
-                item = content_layout.takeAt(0)
-                widget = item.widget()
-                if widget is not None:
-                    widget.deleteLater()
-
-        def record_matches_filter(record, filter_name):
-            if filter_name == "all":
-                return True
-
-            date_text = record.get("date")
-            if not date_text:
-                return False
-
-            try:
-                record_date = datetime.strptime(date_text, "%Y-%m-%d").date()
-            except ValueError:
-                return False
-
-            today = datetime.now().date()
-
-            if filter_name == "week":
-                week_start = today - timedelta(days=6)
-                return week_start <= record_date <= today
-
-            if filter_name == "month":
-                return record_date.year == today.year and record_date.month == today.month
-
-            return True
-
-        def refresh_history_cards(filter_name="all"):
-            clear_history_cards()
-
-            filtered_history = [
-                record
-                for record in history
-                if record_matches_filter(record, filter_name)
-            ]
-
-            if not filtered_history:
-                empty_label = QLabel("No workout data for this filter.")
-                empty_label.setObjectName("HistoryEmpty")
-                empty_label.setAlignment(Qt.AlignCenter)
-                content_layout.addWidget(empty_label)
-            else:
-                count_label = QLabel(
-                    f"Showing {len(filtered_history)} workout{'s' if len(filtered_history) != 1 else ''}"
-                )
-                count_label.setObjectName("HistoryEmpty")
-                count_label.setAlignment(Qt.AlignRight)
-                content_layout.addWidget(count_label)
-
-                for record in reversed(filtered_history):
-                    content_layout.addWidget(self.create_history_card(record))
-
-            content_layout.addStretch()
-
-        refresh_history_cards("all")
-        scroll_area.setWidget(content)
-
-        close_button = QPushButton("CLOSE")
-        close_button.clicked.connect(dialog.accept)
-
-        btn_row = QHBoxLayout()
-        btn_row.addWidget(close_button)
-
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
-        layout.addLayout(stats_layout)
-        layout.addLayout(filter_layout)
-        layout.addWidget(scroll_area)
-        layout.addLayout(btn_row)
-
+        dialog = WorkoutHistoryDialog(history, self)
         dialog.exec()
-
-
-    def open_history_graphics(self):
-        history = self.load_workout_history()
-
-        if not history:
-            print("No workout history yet.")
-            return
-
-        today = datetime.now().date()
-        last_7_days = [today - timedelta(days=i) for i in range(6, -1, -1)]
-
-        counts_by_day = {
-            day.strftime("%Y-%m-%d"): 0
-            for day in last_7_days
-        }
-
-        month_counts = Counter()
-        exercise_counter = Counter()
-
-        for record in history:
-            date_text = record.get("date")
-            exercise = record.get("exercise", "UNKNOWN")
-
-            if not date_text:
-                continue
-
-            try:
-                record_date = datetime.strptime(date_text, "%Y-%m-%d").date()
-            except ValueError:
-                continue
-
-            date_key = record_date.strftime("%Y-%m-%d")
-
-            if date_key in counts_by_day:
-                counts_by_day[date_key] += 1
-
-            if record_date.year == today.year and record_date.month == today.month:
-                month_counts[record_date.day] += 1
-
-            exercise_counter[exercise] += 1
-
-        week_labels = [day.strftime("%a") for day in last_7_days]
-        week_values = list(counts_by_day.values())
-
-        days_in_month = monthrange(today.year, today.month)[1]
-        month_days = list(range(1, days_in_month + 1))
-        month_values = [month_counts.get(day, 0) for day in month_days]
-
-        top_items = exercise_counter.most_common(5)
-        top_labels = [item[0].replace("_", " ") for item in top_items]
-        top_values = [item[1] for item in top_items]
-
-        plt.style.use("dark_background")
-
-        fig, axes = plt.subplots(1, 3, figsize=(10.5, 3.6), dpi=100)
-
-        try:
-            fig.canvas.manager.set_window_title("FormAI - Workout History")
-        except Exception:
-            pass
-
-        fig.patch.set_facecolor("#1E1E1E")
-        fig.suptitle("Workout History", fontsize=13, fontweight="bold", color="#D4D4D4")
-
-        for ax in axes:
-            ax.set_facecolor("#252526")
-            ax.tick_params(colors="#D4D4D4")
-            ax.title.set_color("#D4D4D4")
-            ax.xaxis.label.set_color("#D4D4D4")
-            ax.yaxis.label.set_color("#D4D4D4")
-
-            for spine in ax.spines.values():
-                spine.set_color("#3E3E42")
-
-        axes[0].plot(
-            week_labels,
-            week_values,
-            color="#22c55e",
-            linewidth=2.6,
-            marker="o",
-            markersize=6,
-        )
-        axes[0].fill_between(week_labels, week_values, color="#22c55e", alpha=0.16)
-        axes[0].set_title("Last 7 Days")
-        axes[0].set_ylabel("Completed")
-        axes[0].set_ylim(0, max(week_values + [1]) + 1)
-        axes[0].grid(True, alpha=0.16)
-
-        axes[1].plot(
-            month_days,
-            month_values,
-            color="#D7BA7D",
-            linewidth=1.8,
-            marker="o",
-            markersize=4,
-        )
-        axes[1].fill_between(month_days, month_values, color="#D7BA7D", alpha=0.14)
-        axes[1].set_title("This Month")
-        axes[1].set_xlabel("Day")
-        axes[1].set_ylabel("Workouts")
-        axes[1].set_xlim(1, days_in_month)
-        axes[1].set_ylim(0, max(month_values + [1]) + 1)
-        axes[1].tick_params(axis="x", labelsize=7, rotation=45)
-        axes[1].grid(True, alpha=0.12)
-
-        if top_items:
-            axes[2].barh(top_labels, top_values, color="#4EC9B0")
-            axes[2].invert_yaxis()
-
-        axes[2].set_title("Top Exercises")
-        axes[2].set_xlabel("Completed")
-        axes[2].grid(True, axis="x", alpha=0.14)
-
-        plt.tight_layout(rect=[0, 0, 1, 0.90])
-        plt.show(block=False)
-        plt.pause(0.001)
 
 
     def load_exercise_images(self, folder):
@@ -1659,6 +1071,9 @@ class QtAppWindow(QWidget):
         y1 = max(0, y - pad)
         x2 = min(image.shape[1], x + w + pad)
         y2 = min(image.shape[0], y + h + pad)
+
+        if x1 >= x2 or y1 >= y2:
+            return image
 
         return image[y1:y2, x1:x2]
 
@@ -1844,15 +1259,20 @@ class QtAppWindow(QWidget):
 
         QTimer.singleShot(0, self.position_fullscreen_button)
         QTimer.singleShot(0, self.position_camera_overlays)
+        QTimer.singleShot(0, self.position_camera_subtitle)
 
 
     def update_camera_frame(self):
         if not self.cap.isOpened():
             return
+        
+        self.process_pending_voice_command()
 
         ret, frame = self.cap.read()
         if not ret:
             return
+        
+        self.frame_index += 1
 
         frame = cv.flip(frame, 1)
 
@@ -1862,6 +1282,7 @@ class QtAppWindow(QWidget):
         )
 
         if angles and self.workout_state == "running":
+            
             if self.workout_started_at is None:
                 self.workout_started_at = time.time()
 
@@ -1891,8 +1312,10 @@ class QtAppWindow(QWidget):
             if drawn_frame is not None:
                 frame = drawn_frame
 
-       
-        if self.app_settings.get("hand_gestures", True):
+
+        interval = 1 if self.gesture_controller.selector_active else self.hand_detection_interval
+
+        if self.frame_index % interval == 0:
             hand_landmarks, handedness = self.hand_sensor.detect(frame)
 
             if hand_landmarks and handedness:
@@ -1932,19 +1355,22 @@ class QtAppWindow(QWidget):
                     state = "ON" if new_state else "OFF"
                     self.gesture_status_label.setText(f"Gestures: {state}")
 
+                elif action == "START_WORKOUT":
+                    if self.workout_state in ("idle", "finished"):
+                        self.start_countdown()
+
             else:
                 self.last_gesture = "None"
                 self.gesture_controller.clear_consecutive()
 
-            if self.gesture_controller.selector_active:
-                self.draw_filmstrip_selector(
-                    frame,
-                    self.exercise_keys,
-                    self.gesture_controller.selector_index,
-                )
-        else:
-            
-            self.last_gesture = "None"
+        if self.gesture_controller.selector_active:
+            self.message_label.hide()
+            self.draw_filmstrip_selector(
+                frame,
+                self.exercise_keys,
+                self.gesture_controller.selector_index,
+            )
+        
 
         frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
 
@@ -1979,6 +1405,9 @@ class QtAppWindow(QWidget):
         if hasattr(self, "timer"):
             self.timer.stop()
 
+        if hasattr(self, "voice_listener"):
+            self.voice_listener.stop()
+
         if hasattr(self, "feedback"):
             if not self.workout_feedback_announced:
                 self.feedback.stop(self.reps)
@@ -1990,7 +1419,6 @@ class QtAppWindow(QWidget):
         if hasattr(self, "cap") and self.cap.isOpened():
             self.cap.release()
 
-        plt.close("all")
         event.accept()
 
 

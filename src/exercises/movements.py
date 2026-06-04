@@ -3,15 +3,19 @@ from src.exercises.base_exercise import BaseExercise, Phase
 
 class Squat(BaseExercise):
     """
-    Classic squat.
-    Considered PEAK when the knee is bent around ~90 degrees.
+    Classic squat with tolerant thresholds.
+    Uses knee angle for repetition counting.
+    Avoids shoulder-angle checks because arm movement causes false warnings.
     """
 
-    T_REST = 155    
-    T_PEAK = 105    
+    T_REST = 160
+    T_PEAK = 112
 
     def _detect_phase(self, angles):
-        knee = self.avg(angles.get("knee_r", 180), angles.get("knee_l", 180))
+        knee_r = angles.get("knee_r", 180)
+        knee_l = angles.get("knee_l", 180)
+        knee = self.avg(knee_r, knee_l)
+
         if knee >= self.T_REST:
             return Phase.REST
         if knee <= self.T_PEAK:
@@ -22,17 +26,21 @@ class Squat(BaseExercise):
 
     def _check_form(self, angles, phase):
         warn, err = [], []
-        knee = self.avg(angles.get("knee_r", 180), angles.get("knee_l", 180))
-        hip  = self.avg(angles.get("hip_r",  180), angles.get("hip_l",  180))
+
+        knee_r = angles.get("knee_r", 180)
+        knee_l = angles.get("knee_l", 180)
+        knee = self.avg(knee_r, knee_l)
+        hip = self.avg(angles.get("hip_r", 180), angles.get("hip_l", 180))
+
+        if abs(knee_r - knee_l) > 25:
+            warn.append("Try to keep both knees moving evenly.")
 
         if phase == Phase.PEAK:
-            if knee < 65:
-                err.append("Too deep! Knee angle is too narrow.")
-            if hip > 100:
-                warn.append("Lower your hips, they should be parallel to the ground.")
+            if knee < 55:
+                warn.append("Do not squat too deep. Keep the movement controlled.")
 
-        if angles.get("shoulder_r", 90) < 50 or angles.get("shoulder_l", 90) < 50:
-            err.append("Do not lean forward! Keep your back straight.")
+            if hip < 45:
+                err.append("Keep your chest up and avoid folding forward.")
 
         return warn, err
 
@@ -60,7 +68,7 @@ class BicepCurl(BaseExercise):
         shoulder_r = angles.get("shoulder_r", 90)
         shoulder_l = angles.get("shoulder_l", 90)
 
-        if shoulder_r < 60 or shoulder_l < 60:
+        if shoulder_r < 50 or shoulder_l < 50:
             err.append("Keep your elbows stable, do not use your shoulders!")
         if phase == Phase.PEAK:
             elbow = min(angles.get("elbow_r", 180), angles.get("elbow_l", 180))
@@ -133,13 +141,18 @@ class LateralRaise(BaseExercise):
 class Lunge(BaseExercise):
     """
     Forward or Reverse Lunge.
+    Uses the more bent knee to detect the lunge phase.
     """
 
     T_REST = 155
     T_PEAK = 100
 
     def _detect_phase(self, angles):
-        knee = angles.get("knee_r", 180)   
+        knee = min(
+            angles.get("knee_r", 180),
+            angles.get("knee_l", 180)
+        )
+
         if knee >= self.T_REST:
             return Phase.REST
         if knee <= self.T_PEAK:
@@ -150,13 +163,32 @@ class Lunge(BaseExercise):
 
     def _check_form(self, angles, phase):
         warn, err = [], []
+
         if phase == Phase.PEAK:
-            hip = angles.get("hip_r", 160)
+            hip = self.avg(
+                angles.get("hip_r", 160),
+                angles.get("hip_l", 160)
+            )
+
+            front_knee = min(
+                angles.get("knee_r", 180),
+                angles.get("knee_l", 180)
+            )
+
+            back_knee = max(
+                angles.get("knee_r", 180),
+                angles.get("knee_l", 180)
+            )
+
             if hip < 130:
-                err.append("Torso leaned forward, keep your upper body upright!")
-            knee_l = angles.get("knee_l", 180)
-            if knee_l > 100:
+                err.append("Keep your upper body upright.")
+
+            if back_knee > 120:
                 warn.append("Bring your back knee closer to the ground.")
+
+            if front_knee < 65:
+                warn.append("Do not bend your front knee too much.")
+
         return warn, err
 
 
@@ -213,7 +245,7 @@ class PushUp(BaseExercise):
         hip = self.avg(angles.get("hip_r", 180), angles.get("hip_l", 180))
         if hip < 150:
             err.append("Do not raise your hips, maintain a straight body line!")
-        if hip > 175:
+        if hip > 178:
             err.append("Your hips are sagging too low!")
         shoulder = self.avg(angles.get("shoulder_r", 90), angles.get("shoulder_l", 90))
         if shoulder > 60:
@@ -247,7 +279,7 @@ class Deadlift(BaseExercise):
 
         shoulder_r = angles.get("shoulder_r", 90)
         shoulder_l = angles.get("shoulder_l", 90)
-        if shoulder_r < 40 or shoulder_l < 40:
+        if shoulder_r < 30 or shoulder_l < 30:
             err.append("Shoulders should not pass the bar line, keep your back flat!")
 
         if phase == Phase.PEAK:
@@ -271,8 +303,8 @@ class Plank(BaseExercise):
 
         if hip < 155:
             err.append("Your hips are too high! Flatten your body.")
-        elif hip > 195:
-            err.append("Your hips are too low, do not let your lower back sag.")
+        elif hip > 175:
+            warn.append("Your hips are too low, do not let your lower back sag.")
 
         shoulder = self.avg(angles.get("shoulder_r", 90), angles.get("shoulder_l", 90))
         if shoulder < 70 or shoulder > 110:
@@ -319,8 +351,8 @@ class CalfRaise(BaseExercise):
     Standing Calf Raise.
     """
 
-    T_REST   = 158
-    T_PEAK   = 168   
+    T_REST   = 155
+    T_PEAK   = 170  
 
     def _detect_phase(self, angles):
         knee = self.avg(angles.get("knee_r", 165), angles.get("knee_l", 165))

@@ -1,18 +1,25 @@
 import numpy as np
 
-def calculate_angle(a,b,c):
-    a=np.array(a)
-    b=np.array(b)
-    c=np.array(c)
-    
+
+def calculate_angle(a, b, c):
+    a = np.array(a, dtype=float)
+    b = np.array(b, dtype=float)
+    c = np.array(c, dtype=float)
+
     ba = a - b
     bc = c - b
-    
-    #θ = arctan2(cross,dot)
-    angle_rad=np.arctan2(ba[0]*bc[1]-ba[1]*bc[0],ba[0]*bc[0]+ba[1]*bc[1])
-    angle = np.abs(angle_rad*180.0/np.pi)
 
-    if angle>180.0:
-        angle = 360.0-angle
+    if np.linalg.norm(ba) == 0 or np.linalg.norm(bc) == 0:
+        return 0.0
 
-    return angle    
+    angle_rad = np.arctan2(
+        ba[0] * bc[1] - ba[1] * bc[0],
+        ba[0] * bc[0] + ba[1] * bc[1]
+    )
+
+    angle = abs(angle_rad * 180.0 / np.pi)
+
+    if angle > 180.0:
+        angle = 360.0 - angle
+
+    return angle
