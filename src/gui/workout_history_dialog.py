@@ -36,13 +36,13 @@ class WorkoutHistoryDialog(QDialog):
         subtitle = QLabel("All completed exercise records")
         subtitle.setObjectName("HistorySubtitle")
 
-        total_count, week_count, success_rate = self._calculate_stats()
+        total_count, week_count, month_count = self._calculate_stats()
 
         stats_layout = QHBoxLayout()
         stats_layout.setSpacing(10)
         stats_layout.addWidget(self.create_history_stat_card(str(total_count), "TOTAL"))
         stats_layout.addWidget(self.create_history_stat_card(str(week_count), "THIS WEEK"))
-        stats_layout.addWidget(self.create_history_stat_card(f"{success_rate}%", "SUCCESS RATE"))
+        stats_layout.addWidget(self.create_history_stat_card(str(month_count), "THIS MONTH"))
 
         filter_layout = QHBoxLayout()
         filter_layout.setSpacing(8)
@@ -243,19 +243,10 @@ class WorkoutHistoryDialog(QDialog):
         today = datetime.now().date()
         week_start = today - timedelta(days=6)
         week_count = 0
-        completed_count = 0
+        month_count = 0
 
         for record in self.history:
-            reps = int(record.get("reps") or 0)
-            elapsed = int(record.get("elapsed_seconds") or 0)
-            target_value = int(record.get("target_value") or 0)
-            target_type = record.get("target_type", "reps")
-
-            current_value = elapsed if target_type == "seconds" else reps
-
-            if target_value > 0 and current_value >= target_value:
-                completed_count += 1
-
+            
             date_text = record.get("date")
             if not date_text:
                 continue
@@ -268,9 +259,10 @@ class WorkoutHistoryDialog(QDialog):
             if week_start <= record_date <= today:
                 week_count += 1
 
-        success_rate = int((completed_count / total_count) * 100) if total_count else 0
+            if record_date.year == today.year and record_date.month == today.month:
+                month_count += 1
 
-        return total_count, week_count, success_rate
+        return total_count, week_count, month_count
 
     def _style(self):
         return """
